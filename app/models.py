@@ -19,4 +19,23 @@ class Observation(Base):
         UniqueConstraint("series_id", "date", name="uq_series_date"),
     )
 
-    
+
+class Threshold(Base):
+    __tablename__ = "thresholds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series_id: Mapped[str] = mapped_column(String(50), unique=True)
+    max_change: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series_id: Mapped[str] = mapped_column(String(50))
+    date: Mapped[date] = mapped_column(Date)
+    value: Mapped[float] = mapped_column(Float)
+    previous_value: Mapped[float] = mapped_column(Float)
+    change: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

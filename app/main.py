@@ -1,10 +1,12 @@
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from sqlalchemy import select
 from app.database import SessionLocal
-from app.models import Observation
+from app.models import Observation, Threshold, Alert
 
 from app.fred_client import ingest_all
+from app.alert_checker import check_alerts
 
 app = FastAPI(title="SENTINEL", version="0.1.0")
 
@@ -34,4 +36,51 @@ def get_metrics():
 @app.post("/ingest")
 def run_ingestion():
     results = ingest_all()
-    return {"ingested": results}
+    alerts = check_alerts()
+    return {"ingested": results, "alerts_fired": alerts}
+
+
+class ThresholdRequest(BaseModel):
+    series_id: str
+    max_change: float
+
+
+@app.post("/thresholds")
+def create_threshold(req: ThresholdRequest):
+    db = SessionLocal()
+    try:
+        existing = db.execute(
+            select(Threshold).where(Threshold.series_id == req.series_id)
+        ).scalar_one_or_none()
+
+        if existing:
+            existing.max_change = req.max_change
+        else:
+            db.add(Threshold(series_id=req.series_id, max_change=req.max_change))
+
+        db.commit()
+        return {"series_id": req.series_id, "max_change": req.max_change}
+    finally:
+        db.close()
+
+
+@app.get("/alerts")
+def get_alerts():
+    db = SessionLocal()
+    try:
+        results = db.execute(
+            select(Alert).order_by(Alert.created_at.desc()).limit(50)
+        ).scalars().all()
+        return [
+            {
+                "series_id": a.series_id,
+                "date": str(a.date),
+                "value": a.value,
+                "previous_value": a.previous_value,
+                "change": a.change,
+                "created_at": str(a.created_at),
+            }
+            for a in results
+        ]
+    finally:
+        db.close()
