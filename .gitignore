@@ -1,4 +1,27 @@
-venv/
+# Secrets — NEVER commit these
 .env
+.env.*
+
+# Python virtual environment
+venv/
+
+# Python cache
 __pycache__/
 *.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+
+# Terraform (for later)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Docker
+*.log
