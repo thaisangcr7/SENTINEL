@@ -1,7 +1,16 @@
+# fred_client.py — Fetches economic data from the FRED API and saves it to PostgreSQL
+#
+# This is the data collection step. It does three things in order:
+#   1. Ask the FRED API for the latest numbers (e.g., the federal funds rate)
+#   2. Clean up the data (skip blanks, convert strings to floats)
+#   3. Save to the database — if a row already exists, update it instead of adding a duplicate
+#
+# This whole pattern is called ETL (Extract → Transform → Load) in data engineering.
+
 import os
 import httpx
 from datetime import datetime
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert  # PostgreSQL-specific upsert syntax
 from app.database import SessionLocal
 from app.models import Observation
 
@@ -9,10 +18,12 @@ from app.models import Observation
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
+# FEDFUNDS = Fed interest rate, CPIAUCSL = inflation, UNRATE = unemployment
 SERIES_IDS = ["FEDFUNDS", "CPIAUCSL", "UNRATE"]
 
 
 def fetch_series(series_id: str) -> list[dict]:
+    """EXTRACT — call FRED API, return raw observation dicts (24 most recent months)."""
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
@@ -22,17 +33,20 @@ def fetch_series(series_id: str) -> list[dict]:
     }
     response = httpx.get(FRED_BASE_URL, params=params)
     response.raise_for_status()
-    data = response.json()
-    return data["observations"]
+    return response.json()["observations"]
 
 
 def ingest_series(series_id: str) -> int:
+    """TRANSFORM + LOAD — fetch one series, upsert into PostgreSQL. Returns row count."""
     observations = fetch_series(series_id)
     db = SessionLocal()
     count = 0
+
+    # try/except/finally: if something goes wrong mid-loop, undo ALL changes made so far.
+    # Without this, a crash halfway through could leave partial data in the database.
     try:
         for obs in observations:
-            if obs["value"] == ".":
+            if obs["value"] == ".":  # FRED uses "." for missing data — skip it
                 continue
 
             stmt = insert(Observation).values(
@@ -41,12 +55,16 @@ def ingest_series(series_id: str) -> int:
                 value=float(obs["value"]),
                 fetched_at=datetime.utcnow(),
             )
+            # on_conflict_do_update = "upsert": try to INSERT, but if a row with this
+            # (series_id + date) already exists, UPDATE it instead of creating a duplicate.
+            # This means you can run /ingest every day without filling the table with copies.
             stmt = stmt.on_conflict_do_update(
                 constraint="uq_series_date",
                 set_={"value": float(obs["value"]), "fetched_at": datetime.utcnow()},
             )
             db.execute(stmt)
             count += 1
+
         db.commit()
     except Exception:
         db.rollback()
@@ -57,6 +75,7 @@ def ingest_series(series_id: str) -> int:
 
 
 def ingest_all() -> dict:
+    """Ingest all three FRED series. Returns {series_id: row_count}."""
     results = {}
     for series_id in SERIES_IDS:
         results[series_id] = ingest_series(series_id)
