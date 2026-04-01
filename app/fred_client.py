@@ -42,22 +42,25 @@ def ingest_series(series_id: str) -> int:
     db = SessionLocal()
     count = 0
 
-    # try/except/finally: if something goes wrong mid-loop, undo ALL changes made so far.
-    # Without this, a crash halfway through could leave partial data in the database.
+    # Pattern: try/except/finally (Database Transaction)
+    # try   → do all the work, then commit (save all changes at once)
+    # except → if anything fails, rollback (undo ALL changes — no partial saves)
+    # finally → ALWAYS close the session, even if an error happened
     try:
         for obs in observations:
-            if obs["value"] == ".":  # FRED uses "." for missing data — skip it
+            if obs["value"] == ".": # FRED uses "." for missing data — skip it
                 continue
 
+            # Pattern: Upsert (INSERT + ON CONFLICT UPDATE)
+            # Try to insert a new row. If a row with this (series_id + date) already exists,
+            # update it instead of creating a duplicate.
+            # This means you can run /ingest every day safely — no copies pile up.
             stmt = insert(Observation).values(
                 series_id=series_id,
                 date=obs["date"],
                 value=float(obs["value"]),
                 fetched_at=datetime.utcnow(),
             )
-            # on_conflict_do_update = "upsert": try to INSERT, but if a row with this
-            # (series_id + date) already exists, UPDATE it instead of creating a duplicate.
-            # This means you can run /ingest every day without filling the table with copies.
             stmt = stmt.on_conflict_do_update(
                 constraint="uq_series_date",
                 set_={"value": float(obs["value"]), "fetched_at": datetime.utcnow()},

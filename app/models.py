@@ -13,6 +13,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
+# Pattern: ORM Declarative Mapping
+# Instead of writing SQL like CREATE TABLE, you define a Python class.
+# SQLAlchemy translates the class into a real PostgreSQL table.
+# Each row in the DB becomes a Python object you can work with directly.
+
 # Observations — raw economic data from the FRED API
 # Each row = one data point (e.g., FEDFUNDS on 2024-01-01 = 5.33)
 class Observation(Base):
@@ -24,7 +29,10 @@ class Observation(Base):
     value: Mapped[float] = mapped_column(Float)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    # Unique on (series_id, date) — enables upsert so running /ingest twice won't duplicate rows
+    # Pattern: Unique Constraint
+    # Tells PostgreSQL that no two rows can share both the same series_id AND date.
+    # This is what makes the upsert in fred_client.py work — it detects the conflict
+    # and updates the existing row instead of inserting a duplicate.
     __table_args__ = (
         UniqueConstraint("series_id", "date", name="uq_series_date"),
     )

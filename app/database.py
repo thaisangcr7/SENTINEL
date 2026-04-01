@@ -20,17 +20,20 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
-# create_engine() opens the connection to PostgreSQL using the URL from .env
-# It keeps a pool of connections ready so we don't reconnect on every request
+# Pattern: Connection Pool
+# create_engine() connects to PostgreSQL and keeps a pool of connections ready.
+# Reusing connections is much faster than opening a new one on every request.
 engine = create_engine(DATABASE_URL)
 
-# sessionmaker() creates a class (SessionLocal) that we use to start database sessions.
-# Every time you call db = SessionLocal(), you get a fresh workspace to run queries.
-# Think of it like opening a new tab in a spreadsheet — isolated, then close it when done.
+# Pattern: Session Factory
+# sessionmaker() gives us a class (SessionLocal) we call to start a new database session.
+# Each session is one isolated workspace — open it, do your work, then close it.
+# Think of it like a shopping cart: you fill it, then check out or cancel.
 SessionLocal = sessionmaker(bind=engine)
 
 
+# Pattern: Declarative Base
 # All table classes (Observation, Threshold, Alert) inherit from Base.
-# SQLAlchemy uses this to know which Python classes map to actual database tables.
+# This tells SQLAlchemy they represent real database tables, not regular Python classes.
 class Base(DeclarativeBase):
     pass

@@ -59,9 +59,10 @@ def run_ingestion():
     return {"ingested": results, "alerts_fired": alerts}
 
 
-# ThresholdRequest defines what shape the JSON body must have for POST /thresholds.
-# Pydantic checks it automatically — if the caller sends the wrong type,
-# FastAPI rejects it with a 422 error before our function even runs.
+# Pattern: Pydantic Request Validation
+# Define the expected shape of the JSON body as a class.
+# FastAPI runs the check automatically — wrong field types get rejected
+# with a 422 error before our function even runs.
 class ThresholdRequest(BaseModel):
     series_id: str
     max_change: float
