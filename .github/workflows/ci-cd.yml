@@ -26,6 +26,10 @@ on:
   push:
     branches: [main]
 
+# Use Node.js 24 for all actions (avoids deprecation warning for Node.js 20)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ──────────────────────────────────────────────
   # Job 1: TEST — Run pytest on a GitHub-provided machine
@@ -56,7 +60,12 @@ jobs:
 
       # Run all 10 tests. If ANY test fails, this step fails,
       # and the entire job is marked as failed — blocking deployment.
+      # DATABASE_URL is needed because app/database.py reads it on import.
+      # Tests mock the actual database calls, so this URL doesn't need to be real —
+      # it just needs to exist so the import doesn't crash.
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql://fake:fake@localhost:5432/fake
         run: pytest tests/ -v
 
   # ──────────────────────────────────────────────
