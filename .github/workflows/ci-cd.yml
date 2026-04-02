@@ -1,0 +1,117 @@
+# ci-cd.yml — Automated testing and deployment pipeline
+#
+# WHAT THIS FILE DOES:
+# Every time you push code to the "main" branch, GitHub Actions will:
+#   1. Spin up a fresh Ubuntu machine (free, provided by GitHub)
+#   2. Install Python and our dependencies
+#   3. Run all 10 pytest tests
+#   4. If tests pass → SSH into our EC2 server and deploy the new code
+#   5. If tests fail → Stop. Don't deploy broken code.
+#
+# WHERE THIS FILE LIVES:
+# .github/workflows/ is a special folder GitHub watches.
+# Any .yml file in here becomes an automated workflow.
+#
+# SECRETS USED (stored in GitHub repo settings, never in code):
+#   EC2_SSH_KEY → our private SSH key to log into the server
+#   EC2_HOST    → the server's IP address (52.23.231.90)
+#   EC2_USER    → "ubuntu" (the Linux user on our EC2 instance)
+
+# Pattern: Workflow Trigger
+# "on: push: branches: [main]" means this pipeline runs every time
+# someone pushes to the main branch. Pull requests, other branches = ignored.
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: TEST — Run pytest on a GitHub-provided machine
+  # ──────────────────────────────────────────────
+  test:
+    # GitHub gives us a free Ubuntu VM. It spins up, runs our steps,
+    # then gets destroyed. We never manage this machine.
+    runs-on: ubuntu-latest
+
+    steps:
+      # Pattern: Pre-built Action (uses:)
+      # "actions/checkout@v4" is a reusable action made by GitHub.
+      # It downloads our repo code onto the runner machine.
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # Install Python 3.11 on the runner.
+      # We pick a specific version so tests are consistent every time.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Same as running "pip install -r requirements.txt" on your laptop.
+      # Installs FastAPI, SQLAlchemy, pytest, etc.
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Run all 10 tests. If ANY test fails, this step fails,
+      # and the entire job is marked as failed — blocking deployment.
+      - name: Run tests
+        run: pytest tests/ -v
+
+  # ──────────────────────────────────────────────
+  # Job 2: DEPLOY — SSH into EC2 and update the running app
+  # ──────────────────────────────────────────────
+  deploy:
+    # Pattern: Job Dependency (needs:)
+    # "needs: test" means this job ONLY runs if the test job passed.
+    # If pytest fails, deploy is skipped — the server stays on the working version.
+    needs: test
+    runs-on: ubuntu-latest
+
+    # Only deploy from the main branch (extra safety check)
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      # Pattern: SSH from CI/CD
+      # To SSH into our server, we need the private key. We stored it
+      # as a GitHub Secret so it never appears in code or logs.
+      # Steps: write key to file → set permissions → SSH in → clean up
+      - name: Deploy to EC2
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          # Write the SSH private key to a temporary file
+          echo "$SSH_KEY" > deploy_key
+          # Set permissions to 600 (owner read/write only)
+          # SSH refuses to use keys with loose permissions — this is required
+          chmod 600 deploy_key
+
+          # SSH into the server and run the deploy commands
+          # -o StrictHostKeyChecking=no → don't ask "are you sure?" (we're in automation)
+          ssh -o StrictHostKeyChecking=no -i deploy_key $EC2_USER@$EC2_HOST << 'DEPLOY'
+            cd SENTINEL
+
+            # Pull the latest code from GitHub
+            git pull origin main
+
+            # Install any new dependencies (in case requirements.txt changed)
+            source venv/bin/activate
+            pip install -r requirements.txt
+
+            # Restart the FastAPI app
+            # Step 1: Kill the old uvicorn process (if running)
+            pkill -f uvicorn || true
+            # Step 2: Start a fresh one in the background
+            # nohup keeps it running after SSH disconnects
+            nohup venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+
+            # Wait a moment and verify the app started
+            sleep 3
+            curl -s http://localhost:8000/health
+          DEPLOY
+
+          # Clean up — delete the private key from the runner
+          rm -f deploy_key
