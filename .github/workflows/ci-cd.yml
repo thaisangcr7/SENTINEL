@@ -109,9 +109,8 @@ jobs:
           echo "EC2_HOST length: ${#EC2_HOST}"
           echo "EC2_USER length: ${#EC2_USER}"
           echo "Connecting to: ${EC2_USER}@${EC2_HOST}"
-        run: |
+
           # Write deploy commands to a script file, then pipe it into SSH.
-          # This avoids all quoting/escaping issues with YAML + shell + SSH.
           cat > deploy.sh << 'EOF'
           cd SENTINEL
           git pull origin main
