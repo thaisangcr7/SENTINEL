@@ -82,35 +82,23 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      # Pattern: SSH from CI/CD
-      # To SSH into our server, we need the private key. We stored it
-      # as a GitHub Secret so it never appears in code or logs.
-      # Steps: write key to file → set permissions → SSH in → clean up
-      # Pattern: SSH from CI/CD (write key → set permissions → connect → clean up)
-      # We pass all deploy commands as a single quoted string to SSH.
-      # This is more reliable than heredocs in GitHub Actions.
+      # Pattern: SSH from CI/CD (write key → set permissions → SSH in → clean up)
+      # The private key is stored as a GitHub Secret — never in code.
       - name: Set up SSH key
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           echo "$SSH_KEY" > deploy_key
+          # SSH refuses to use keys with loose permissions — 600 = owner read/write only
           chmod 600 deploy_key
-          # Debug: verify the key file exists and has content
-          echo "Key file size: $(wc -c < deploy_key) bytes"
-          echo "Key file lines: $(wc -l < deploy_key) lines"
-          head -1 deploy_key
 
       - name: Deploy to EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
-          # Debug: check if secrets are populated
-          echo "EC2_HOST length: ${#EC2_HOST}"
-          echo "EC2_USER length: ${#EC2_USER}"
-          echo "Connecting to: ${EC2_USER}@${EC2_HOST}"
-
           # Write deploy commands to a script file, then pipe it into SSH.
+          # This avoids quoting/escaping issues between YAML, shell, and SSH.
           cat > deploy.sh << 'EOF'
           cd SENTINEL
           git pull origin main
