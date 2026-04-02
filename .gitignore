@@ -18,6 +18,12 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local skills (not committed — personal learning aids)
+.github/skills/
+
+# Personal study notes (not committed)
+docs/
+
 # Terraform (for later)
 *.tfstate
 *.tfstate.backup
