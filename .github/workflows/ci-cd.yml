@@ -86,11 +86,12 @@ jobs:
       # To SSH into our server, we need the private key. We stored it
       # as a GitHub Secret so it never appears in code or logs.
       # Steps: write key to file → set permissions → SSH in → clean up
-      - name: Deploy to EC2
+      # Pattern: SSH from CI/CD (write key → set permissions → connect → clean up)
+      # We pass all deploy commands as a single quoted string to SSH.
+      # This is more reliable than heredocs in GitHub Actions.
+      - name: Set up SSH key
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           # Write the SSH private key to a temporary file
           echo "$SSH_KEY" > deploy_key
@@ -98,29 +99,22 @@ jobs:
           # SSH refuses to use keys with loose permissions — this is required
           chmod 600 deploy_key
 
-          # SSH into the server and run the deploy commands
-          # -o StrictHostKeyChecking=no → don't ask "are you sure?" (we're in automation)
-          ssh -o StrictHostKeyChecking=no -i deploy_key $EC2_USER@$EC2_HOST << 'DEPLOY'
-            cd SENTINEL
-
-            # Pull the latest code from GitHub
-            git pull origin main
-
-            # Install any new dependencies (in case requirements.txt changed)
-            source venv/bin/activate
-            pip install -r requirements.txt
-
-            # Restart the FastAPI app
-            # Step 1: Kill the old uvicorn process (if running)
-            pkill -f uvicorn || true
-            # Step 2: Start a fresh one in the background
-            # nohup keeps it running after SSH disconnects
+      - name: Deploy to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i deploy_key "$EC2_USER@$EC2_HOST" '
+            cd SENTINEL &&
+            git pull origin main &&
+            source venv/bin/activate &&
+            pip install -r requirements.txt &&
+            pkill -f uvicorn || true &&
             nohup venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
-
-            # Wait a moment and verify the app started
-            sleep 3
+            sleep 3 &&
             curl -s http://localhost:8000/health
-          DEPLOY
+          '
 
-          # Clean up — delete the private key from the runner
-          rm -f deploy_key
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f deploy_key
