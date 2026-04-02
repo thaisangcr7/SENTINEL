@@ -60,12 +60,15 @@ jobs:
 
       # Run all 10 tests. If ANY test fails, this step fails,
       # and the entire job is marked as failed — blocking deployment.
-      # DATABASE_URL is needed because app/database.py reads it on import.
-      # Tests mock the actual database calls, so this URL doesn't need to be real —
-      # it just needs to exist so the import doesn't crash.
+      # DATABASE_URL and API_KEY are needed because app modules read them at import time.
+      # FRED_API_KEY is needed because fred_client.py now validates it at startup too.
+      # Tests mock the actual external calls, so these values don't need to be real —
+      # they just need to exist so startup checks don't raise RuntimeError.
       - name: Run tests
         env:
           DATABASE_URL: postgresql://fake:fake@localhost:5432/fake
+          API_KEY: test-key
+          FRED_API_KEY: fake-fred-key
         run: pytest tests/ -v
 
   # ──────────────────────────────────────────────
@@ -82,15 +85,23 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      # Pattern: SSH from CI/CD (write key → set permissions → SSH in → clean up)
+      # Pattern: SSH from CI/CD (write key → scan host fingerprint → SSH in → clean up)
       # The private key is stored as a GitHub Secret — never in code.
       - name: Set up SSH key
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
+          mkdir -p ~/.ssh
           echo "$SSH_KEY" > deploy_key
           # SSH refuses to use keys with loose permissions — 600 = owner read/write only
           chmod 600 deploy_key
+          # Pattern: SSH Host Verification
+          # ssh-keyscan asks the server "what is your fingerprint?" and adds it
+          # to the known_hosts file. SSH then verifies the fingerprint on the actual
+          # connection. This replaces StrictHostKeyChecking=no — we now CHECK the
+          # host, we just do it automatically instead of storing it manually.
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy to EC2
         env:
@@ -109,7 +120,7 @@ jobs:
           sleep 3
           curl -s http://localhost:8000/health
           EOF
-          ssh -o StrictHostKeyChecking=no -i deploy_key "$EC2_USER@$EC2_HOST" bash < deploy.sh
+          ssh -i deploy_key "$EC2_USER@$EC2_HOST" bash < deploy.sh
 
       - name: Clean up SSH key
         if: always()

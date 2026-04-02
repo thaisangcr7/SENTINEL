@@ -10,8 +10,11 @@
 #         alert_checker.py ← PostgreSQL
 #
 # Rule of thumb: GET endpoints = just read data. POST endpoints = do something / change data.
+# Security rule: READ endpoints are public. WRITE endpoints require an API key.
 
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from sqlalchemy import select
@@ -22,6 +25,41 @@ from app.fred_client import ingest_all
 from app.alert_checker import check_alerts
 
 app = FastAPI(title="SENTINEL", version="0.1.0")
+
+
+# ── API Key Security ──────────────────────────────────────────────────────────
+#
+# Pattern: Fail Fast — crash at startup if the secret is missing.
+# If API_KEY is not in the environment, the app refuses to start.
+# This forces whoever deploys the app to set it — no silent misconfiguration.
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    raise RuntimeError("API_KEY is not set")
+
+# Pattern: APIKeyHeader
+# This tells FastAPI to look for a header named "X-API-Key" on every request.
+# It also auto-documents the header in /docs as a lock icon.
+# Setting auto_error=False means WE control the error message (not FastAPI).
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(key: str = Depends(api_key_header)):
+    """Pattern: Dependency Function (a reusable security gate).
+
+    FastAPI calls this function BEFORE running any endpoint that declares it.
+    If the key is wrong or missing, we raise HTTPException — FastAPI stops
+    the request immediately and returns 401 to the caller.
+    The protected endpoint function never even runs.
+
+    We add it to an endpoint like this:
+        @app.post("/ingest", dependencies=[Depends(require_api_key)])
+
+    Using 'dependencies=[...]' on the decorator (not a function param) means
+    FastAPI runs the check but does not inject a return value — cleaner for
+    "gate-only" checks like auth.
+    """
+    if key is None or key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # Health check — load balancers use this to know the server is alive
@@ -52,7 +90,8 @@ def get_metrics():
 
 # Trigger the full pipeline: fetch from FRED → upsert → check alerts
 # POST because it changes data. In production, a cron job calls this.
-@app.post("/ingest")
+# Protected: requires X-API-Key header — prevents anyone from spamming the FRED API.
+@app.post("/ingest", dependencies=[Depends(require_api_key)])
 def run_ingestion():
     results = ingest_all()
     alerts = check_alerts()
@@ -69,7 +108,8 @@ class ThresholdRequest(BaseModel):
 
 
 # Create or update an alert threshold (app-level upsert)
-@app.post("/thresholds")
+# Protected: requires X-API-Key header — prevents anyone from overwriting alert rules.
+@app.post("/thresholds", dependencies=[Depends(require_api_key)])
 def create_threshold(req: ThresholdRequest):
     db = SessionLocal()
     try:

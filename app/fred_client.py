@@ -16,6 +16,12 @@ from app.models import Observation
 
 
 FRED_API_KEY = os.getenv("FRED_API_KEY")
+# Pattern: Fail Fast — same pattern as DATABASE_URL in database.py
+# If the key is missing, crash immediately at startup with a clear message.
+# Better to fail at boot than to fail silently when someone calls /ingest.
+if not FRED_API_KEY:
+    raise RuntimeError("FRED_API_KEY is not set")
+
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # FEDFUNDS = Fed interest rate, CPIAUCSL = inflation, UNRATE = unemployment

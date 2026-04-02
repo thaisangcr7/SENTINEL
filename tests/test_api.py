@@ -73,15 +73,24 @@ def test_get_metrics_empty(mocker):
 # ── Test 4: POST /ingest calls ingest_all and check_alerts ───────────────────
 # We don't test the actual ingestion logic here — that's fred_client's job.
 # We just confirm that /ingest calls both functions and returns their results.
+# Protected endpoint — we must include the API key header.
 def test_ingest_calls_pipeline(mocker):
     mocker.patch("app.main.ingest_all", return_value={"FEDFUNDS": 24, "CPIAUCSL": 23, "UNRATE": 23})
     mocker.patch("app.main.check_alerts", return_value=[])
 
-    response = client.post("/ingest")
+    response = client.post("/ingest", headers={"X-API-Key": "test-key"})
     assert response.status_code == 200
     body = response.json()
     assert body["ingested"]["FEDFUNDS"] == 24
     assert body["alerts_fired"] == []
+
+
+# ── Test 4b: POST /ingest returns 401 when API key is missing ─────────────────
+# This verifies the security gate is actually working.
+# No API key header → 401 Unauthorized. The pipeline never runs.
+def test_ingest_rejected_without_api_key():
+    response = client.post("/ingest")
+    assert response.status_code == 401
 
 
 # ── Test 5: POST /thresholds creates a new threshold ─────────────────────────
@@ -91,7 +100,7 @@ def test_create_threshold(mocker):
     mock_db.execute.return_value.scalar_one_or_none.return_value = None
     mocker.patch("app.main.SessionLocal", return_value=mock_db)
 
-    response = client.post("/thresholds", json={"series_id": "FEDFUNDS", "max_change": 0.05})
+    response = client.post("/thresholds", json={"series_id": "FEDFUNDS", "max_change": 0.05}, headers={"X-API-Key": "test-key"})
     assert response.status_code == 200
     assert response.json() == {"series_id": "FEDFUNDS", "max_change": 0.05}
 
@@ -108,7 +117,7 @@ def test_update_existing_threshold(mocker):
     mock_db.execute.return_value.scalar_one_or_none.return_value = existing
     mocker.patch("app.main.SessionLocal", return_value=mock_db)
 
-    response = client.post("/thresholds", json={"series_id": "FEDFUNDS", "max_change": 0.25})
+    response = client.post("/thresholds", json={"series_id": "FEDFUNDS", "max_change": 0.25}, headers={"X-API-Key": "test-key"})
     assert response.status_code == 200
     # The existing object's max_change should have been updated
     assert existing.max_change == 0.25
@@ -117,8 +126,9 @@ def test_update_existing_threshold(mocker):
 # ── Test 7: POST /thresholds rejects bad input ───────────────────────────────
 # Pydantic should reject a request where max_change is a string, not a float.
 # FastAPI returns 422 Unprocessable Entity automatically — no code needed on our side.
+# Note: we include the API key so the auth check passes and Pydantic's check can run.
 def test_create_threshold_invalid_body():
-    response = client.post("/thresholds", json={"series_id": "FEDFUNDS", "max_change": "not-a-number"})
+    response = client.post("/thresholds", json={"series_id": "FEDFUNDS", "max_change": "not-a-number"}, headers={"X-API-Key": "test-key"})
     assert response.status_code == 422
 
 
@@ -168,7 +178,7 @@ def test_ingest_returns_fired_alerts(mocker):
     mocker.patch("app.main.ingest_all", return_value={"FEDFUNDS": 24})
     mocker.patch("app.main.check_alerts", return_value=fired)
 
-    response = client.post("/ingest")
+    response = client.post("/ingest", headers={"X-API-Key": "test-key"})
     assert response.status_code == 200
     body = response.json()
     assert len(body["alerts_fired"]) == 1
