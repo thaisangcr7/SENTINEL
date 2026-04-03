@@ -45,6 +45,11 @@ on:
     branches: [main]
   schedule:
     - cron: '0 8 * * *'
+  # Pattern: Manual Trigger (workflow_dispatch)
+  # Adding this enables the "Run workflow" button in the GitHub Actions UI.
+  # Without it, the workflow can only be triggered by push or schedule.
+  # We use this for testing the ingest job without waiting for 8am UTC.
+  workflow_dispatch:
 
 # Use Node.js 24 for all actions (avoids deprecation warning for Node.js 20)
 env:
@@ -156,9 +161,10 @@ jobs:
     # which would waste FRED API calls and obscure the deployment logs.
     #
     # github.event_name is a built-in variable GitHub sets automatically:
-    #   'push'     → someone pushed code
-    #   'schedule' → the cron timer fired
-    if: github.event_name == 'schedule'
+    #   'push'             → someone pushed code
+    #   'schedule'         → the cron timer fired
+    #   'workflow_dispatch'→ someone clicked "Run workflow" in the UI
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
