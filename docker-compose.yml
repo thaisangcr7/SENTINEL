@@ -1,0 +1,86 @@
+# docker-compose.yml — Runs SENTINEL's two containers together
+#
+# docker-compose is an orchestrator. It reads this file and:
+#   1. Creates a private network for the containers to talk to each other
+#   2. Starts each service (container) in the right order
+#   3. Wires them together with the right env vars and port mappings
+#
+# WHY two containers?
+#   Each container does ONE thing. This is the Unix philosophy applied to services.
+#   "db" runs PostgreSQL. "app" runs FastAPI. They communicate over a private network.
+#   If you ever need to scale, swap the DB, or update just the API — you change one.
+#
+# The private network:
+#   Containers on the same compose network reach each other by SERVICE NAME.
+#   So instead of DATABASE_URL pointing to "localhost", it points to "db"
+#   (the service name below). Docker resolves "db" to the right container IP.
+
+services:
+
+  # ── Service 1: PostgreSQL Database ──────────────────────────────────────────
+  db:
+    # Pattern: Official Image
+    # "postgres:16-alpine" = PostgreSQL 16 on Alpine Linux (tiny, fast).
+    # Using the same version we already run on EC2 for consistency.
+    image: postgres:16-alpine
+
+    # Pattern: Named Volume
+    # Without this, all data is lost when the container stops.
+    # volumes: maps a named volume ("postgres_data") to the folder inside
+    # the container where PostgreSQL stores its files (/var/lib/postgresql/data).
+    # The named volume persists on the host machine between restarts.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # environment: passes values into the container as environment variables.
+    # These are the standard PostgreSQL bootstrap variables —
+    # they create the database, user, and password on first startup.
+    environment:
+      POSTGRES_DB: sentinel
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    # Pattern: Health Check
+    # "is the container running?" is different from "is PostgreSQL ready to accept connections?"
+    # A container can be "running" but PostgreSQL can still be initializing.
+    # healthcheck lets Docker wait for PostgreSQL to actually be ready before
+    # starting the app container (see depends_on below).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Service 2: FastAPI Application ──────────────────────────────────────────
+  app:
+    # Pattern: Build from Dockerfile
+    # "build: ." means "build the image using the Dockerfile in the current directory"
+    # instead of pulling a pre-built image from Docker Hub.
+    build: .
+
+    # Port mapping: "host_port:container_port"
+    # "8000:8000" = traffic arriving on port 8000 of the HOST (EC2 server or your Mac)
+    # is forwarded into port 8000 of the container.
+    # Without this, the container runs but nothing outside it can reach it.
+    ports:
+      - "8000:8000"
+
+    # Pattern: depends_on with health check condition
+    # "depends_on: db: condition: service_healthy" means:
+    # Don't start the app container until the db container passes its health check.
+    # Without this, the app starts before PostgreSQL is ready and crashes on import.
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # env_file loads all variables from the .env file into the container.
+    # This is how DATABASE_URL, FRED_API_KEY, and API_KEY reach the app.
+    # The .env file is never committed to git — it stays on the machine running Docker.
+    env_file:
+      - .env
+
+# Pattern: Named Volumes declaration
+# Any named volume used in "services" must be declared here.
+# Docker creates and manages this volume on the host machine.
+volumes:
+  postgres_data:

@@ -138,10 +138,14 @@ jobs:
           cat > deploy.sh << 'EOF'
           cd SENTINEL
           git pull origin main
-          source venv/bin/activate
-          pip install -r requirements.txt
-          pkill -f uvicorn || true
-          nohup venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+          # Pattern: Docker Compose deploy
+          # Build the new app image from the updated Dockerfile,
+          # then restart only the app container (not the db — it keeps its data).
+          # --build  = rebuild the image from the Dockerfile (picks up code changes)
+          # -d       = detached mode (runs in background, doesn't block the terminal)
+          # --no-deps = only restart "app", not its dependencies (db keeps running)
+          docker compose build app
+          docker compose up -d --no-deps app
           sleep 3
           curl -s http://localhost:8000/health
           EOF

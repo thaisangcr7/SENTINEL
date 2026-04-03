@@ -31,3 +31,5 @@ docs/
 
 # Docker
 *.log
+# Docker build cache and override files (local only)
+docker-compose.override.yml
