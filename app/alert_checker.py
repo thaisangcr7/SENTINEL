@@ -6,9 +6,13 @@
 # If the change is bigger than allowed (in either direction), it saves an Alert.
 
 from datetime import datetime
+import logging
 from sqlalchemy import select
 from app.database import SessionLocal
 from app.models import Observation, Threshold, Alert
+
+# Pattern: Module-level logger — named "app.alert_checker" automatically
+logger = logging.getLogger(__name__)
 
 
 def check_alerts() -> list[dict]:
@@ -22,6 +26,7 @@ def check_alerts() -> list[dict]:
     # finally → always close the session
     try:
         thresholds = db.execute(select(Threshold)).scalars().all()
+        logger.info("Checking %d threshold rule(s)", len(thresholds))
 
         for threshold in thresholds:
             observations = db.execute(
@@ -32,6 +37,7 @@ def check_alerts() -> list[dict]:
             ).scalars().all()
 
             if len(observations) < 2:
+                logger.warning("%s: fewer than 2 observations found, skipping", threshold.series_id)
                 continue
 
             # Pattern: Set for Deduplication
@@ -65,6 +71,10 @@ def check_alerts() -> list[dict]:
                     )
                     db.add(alert)
                     existing_dates.add(current.date)
+                    logger.warning(
+                        "ALERT fired — %s on %s: change=%.4f (threshold=%.4f)",
+                        threshold.series_id, current.date, change, threshold.max_change
+                    )
                     fired.append({
                         "series_id": threshold.series_id,
                         "date": str(current.date),
@@ -74,6 +84,7 @@ def check_alerts() -> list[dict]:
                     })
 
         db.commit()
+        logger.info("Alert check complete — %d new alert(s) saved", len(fired))
     except Exception:
         db.rollback()
         raise

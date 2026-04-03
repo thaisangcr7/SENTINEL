@@ -13,6 +13,7 @@
 # Security rule: READ endpoints are public. WRITE endpoints require an API key.
 
 import os
+import logging
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
@@ -25,6 +26,36 @@ from app.fred_client import ingest_all
 from app.alert_checker import check_alerts
 
 app = FastAPI(title="SENTINEL", version="0.1.0")
+
+
+# ── Logging Setup ───────────────────────────────────────────────
+#
+# Pattern: Centralized Logging Configuration
+# basicConfig() is called ONCE here at app startup.
+# Every other module (fred_client, alert_checker) calls getLogger(__name__)
+# and automatically inherits this format and level.
+#
+# Format fields:
+#   %(asctime)s   → timestamp: "2026-04-03 08:00:01"
+#   %(levelname)s → severity:  "INFO", "WARNING", "ERROR"
+#   %(name)s      → module:    "app.fred_client", "app.alert_checker"
+#   %(message)s   → the actual log message
+#
+# Why level=INFO and not DEBUG?
+#   DEBUG logs every internal detail — too noisy for daily operation.
+#   INFO logs meaningful events: pipeline started, rows ingested, alerts fired.
+#   In production, INFO is the standard default.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+# Pattern: Module-level logger
+# Each module gets its own logger named after the file.
+# __name__ is a Python built-in that equals the module path, e.g. "app.main".
+# This means log lines show exactly which file they came from.
+logger = logging.getLogger(__name__)
 
 
 # ── API Key Security ──────────────────────────────────────────────────────────
@@ -93,8 +124,15 @@ def get_metrics():
 # Protected: requires X-API-Key header — prevents anyone from spamming the FRED API.
 @app.post("/ingest", dependencies=[Depends(require_api_key)])
 def run_ingestion():
+    logger.info("Pipeline triggered via POST /ingest")
     results = ingest_all()
     alerts = check_alerts()
+    # Calculate total rows across all series for the summary log line
+    total_rows = sum(results.values())
+    logger.info(
+        "Pipeline complete — %d rows ingested across %d series, %d alerts fired",
+        total_rows, len(results), len(alerts)
+    )
     return {"ingested": results, "alerts_fired": alerts}
 
 

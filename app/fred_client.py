@@ -8,11 +8,18 @@
 # This whole pattern is called ETL (Extract → Transform → Load) in data engineering.
 
 import os
+import logging
 import httpx
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import insert  # PostgreSQL-specific upsert syntax
 from app.database import SessionLocal
 from app.models import Observation
+
+# Pattern: Module-level logger
+# getLogger(__name__) gives this module its own logger named "app.fred_client".
+# It inherits the format and level configured in main.py's basicConfig() call.
+# We never call basicConfig() here — only in the entry point (main.py).
+logger = logging.getLogger(__name__)
 
 
 FRED_API_KEY = os.getenv("FRED_API_KEY")
@@ -30,6 +37,7 @@ SERIES_IDS = ["FEDFUNDS", "CPIAUCSL", "UNRATE"]
 
 def fetch_series(series_id: str) -> list[dict]:
     """EXTRACT — call FRED API, return raw observation dicts (24 most recent months)."""
+    logger.info("Fetching %s from FRED API (last 24 months)", series_id)
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
@@ -39,7 +47,9 @@ def fetch_series(series_id: str) -> list[dict]:
     }
     response = httpx.get(FRED_BASE_URL, params=params)
     response.raise_for_status()
-    return response.json()["observations"]
+    observations = response.json()["observations"]
+    logger.info("%s: received %d raw observations from FRED", series_id, len(observations))
+    return observations
 
 
 def ingest_series(series_id: str) -> int:
@@ -75,8 +85,10 @@ def ingest_series(series_id: str) -> int:
             count += 1
 
         db.commit()
+        logger.info("%s: %d rows upserted into PostgreSQL", series_id, count)
     except Exception:
         db.rollback()
+        logger.error("%s: ingestion failed, transaction rolled back", series_id)
         raise
     finally:
         db.close()
