@@ -15,10 +15,11 @@
 import os
 import logging
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.database import SessionLocal
 from app.models import Observation, Threshold, Alert
 
@@ -93,10 +94,32 @@ def require_api_key(key: str = Depends(api_key_header)):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
-# Health check — load balancers use this to know the server is alive
+# Health check — load balancers and monitoring tools call this endpoint.
+# A SHALLOW check just returns 200 if the process is running.
+# A DEEP check also verifies the database is reachable — that's what we do here.
+#
+# Why HTTP 503?
+# Load balancers look at the status CODE, not the body.
+# 503 = "Service Unavailable" — tells the load balancer to stop sending traffic here.
+# 200 with { "database": "error" } in the body gets silently ignored.
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    db = SessionLocal()  # Open a database connection
+    try:
+        # Run the simplest possible SQL query — just to prove the DB responds.
+        # text() is SQLAlchemy's safe way to run raw SQL.
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "ok"}
+    except Exception as e:
+        # Log the error so we can see it in docker compose logs
+        logger.error("Health check — database unreachable: %s", e)
+        # Return 503 so load balancers know to pull this instance from rotation
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "database": "error"}
+        )
+    finally:
+        db.close()  # Always close the connection, whether it succeeded or failed
 
 
 # Return the 100 most recent observations (read-only)

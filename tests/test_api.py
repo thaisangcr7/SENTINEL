@@ -24,12 +24,18 @@ client = TestClient(app)
 
 
 # ── Test 1: GET /health ──────────────────────────────────────────────────────
-# The simplest possible test — no database, no mocking needed.
-# If this fails, the whole app is broken.
-def test_health_check():
+# Deep health check — proves both the app AND the database are reachable.
+# We mock SessionLocal so the test doesn't need a real PostgreSQL instance.
+# The mock simulates a successful DB connection by doing nothing on execute().
+def test_health_check(mocker):
+    # Create a fake DB session whose execute() method does nothing (simulates success)
+    mock_db = MagicMock()
+    # Patch SessionLocal so the health endpoint gets our fake session instead of a real one
+    mocker.patch("app.main.SessionLocal", return_value=mock_db)
+
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "database": "ok"}
 
 
 # ── Test 2: GET /metrics returns a list ──────────────────────────────────────
