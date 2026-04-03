@@ -26,7 +26,30 @@ from app.models import Observation, Threshold, Alert
 from app.fred_client import ingest_all
 from app.alert_checker import check_alerts
 
-app = FastAPI(title="SENTINEL", version="0.1.0")
+# FastAPI reads these values and displays them at the top of /docs.
+# description supports Markdown — **bold**, line breaks, etc.
+# openapi_tags defines the group labels that appear above the endpoint list.
+# Each endpoint gets assigned to a group via tags=["GroupName"].
+app = FastAPI(
+    title="SENTINEL",
+    version="0.1.0",
+    description=(
+        "A financial data pipeline that tracks live economic indicators "
+        "(FEDFUNDS, CPI, UNRATE) from the FRED API, stores them in PostgreSQL, "
+        "and fires alerts when values cross configured thresholds.\n\n"
+        "**Deployed on AWS EC2 · Dockerized · CI/CD via GitHub Actions**"
+    ),
+    openapi_tags=[
+        {
+            "name": "Monitoring",
+            "description": "Read-only endpoints — no auth required. Check system health or browse collected data.",
+        },
+        {
+            "name": "Pipeline",
+            "description": "Write endpoints — require `X-API-Key` header. Trigger ingestion or configure thresholds.",
+        },
+    ],
+)
 
 
 # ── Logging Setup ───────────────────────────────────────────────
@@ -102,7 +125,7 @@ def require_api_key(key: str = Depends(api_key_header)):
 # Load balancers look at the status CODE, not the body.
 # 503 = "Service Unavailable" — tells the load balancer to stop sending traffic here.
 # 200 with { "database": "error" } in the body gets silently ignored.
-@app.get("/health")
+@app.get("/health", tags=["Monitoring"])
 def health_check():
     db = SessionLocal()  # Open a database connection
     try:
@@ -123,7 +146,7 @@ def health_check():
 
 
 # Return the 100 most recent observations (read-only)
-@app.get("/metrics")
+@app.get("/metrics", tags=["Monitoring"])
 def get_metrics():
     db = SessionLocal()
     try:
@@ -145,7 +168,7 @@ def get_metrics():
 # Trigger the full pipeline: fetch from FRED → upsert → check alerts
 # POST because it changes data. In production, a cron job calls this.
 # Protected: requires X-API-Key header — prevents anyone from spamming the FRED API.
-@app.post("/ingest", dependencies=[Depends(require_api_key)])
+@app.post("/ingest", dependencies=[Depends(require_api_key)], tags=["Pipeline"])
 def run_ingestion():
     logger.info("Pipeline triggered via POST /ingest")
     results = ingest_all()
@@ -170,7 +193,7 @@ class ThresholdRequest(BaseModel):
 
 # Create or update an alert threshold (app-level upsert)
 # Protected: requires X-API-Key header — prevents anyone from overwriting alert rules.
-@app.post("/thresholds", dependencies=[Depends(require_api_key)])
+@app.post("/thresholds", dependencies=[Depends(require_api_key)], tags=["Pipeline"])
 def create_threshold(req: ThresholdRequest):
     db = SessionLocal()
     try:
@@ -190,7 +213,7 @@ def create_threshold(req: ThresholdRequest):
 
 
 # List the 50 most recent fired alerts
-@app.get("/alerts")
+@app.get("/alerts", tags=["Monitoring"])
 def get_alerts():
     db = SessionLocal()
     try:
