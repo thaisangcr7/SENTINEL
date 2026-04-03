@@ -1,12 +1,19 @@
-# ci-cd.yml — Automated testing and deployment pipeline
+# ci-cd.yml — Automated testing, deployment, and scheduled ingestion pipeline
 #
 # WHAT THIS FILE DOES:
-# Every time you push code to the "main" branch, GitHub Actions will:
-#   1. Spin up a fresh Ubuntu machine (free, provided by GitHub)
-#   2. Install Python and our dependencies
-#   3. Run all 10 pytest tests
-#   4. If tests pass → SSH into our EC2 server and deploy the new code
-#   5. If tests fail → Stop. Don't deploy broken code.
+# Two triggers run this file:
+#
+#   1. ON PUSH to main:
+#      a. Spin up a fresh Ubuntu machine (free, provided by GitHub)
+#      b. Install Python and run all 11 pytest tests
+#      c. If tests pass → SSH into EC2 and deploy the new code
+#      d. If tests fail → Stop. Don't deploy broken code.
+#
+#   2. ON SCHEDULE (daily at 8am UTC):
+#      a. Call POST /ingest on the live server
+#      b. Log the response (rows ingested, alerts fired)
+#      c. This is what makes SENTINEL a real automated pipeline —
+#         data flows every day without anyone touching a keyboard.
 #
 # WHERE THIS FILE LIVES:
 # .github/workflows/ is a special folder GitHub watches.
@@ -16,15 +23,28 @@
 #   EC2_SSH_KEY → our private SSH key to log into the server
 #   EC2_HOST    → the server's IP address (52.23.231.90)
 #   EC2_USER    → "ubuntu" (the Linux user on our EC2 instance)
+#   API_KEY     → the secret key required to call POST /ingest
 
-# Pattern: Workflow Trigger
-# "on: push: branches: [main]" means this pipeline runs every time
-# someone pushes to the main branch. Pull requests, other branches = ignored.
+# Pattern: Multiple Workflow Triggers
+# This workflow responds to TWO different events:
+#
+#   push → runs when you push code to main (test + deploy)
+#   schedule → runs on a timer every day (just ingestion)
+#
+# The cron string '0 8 * * *' is standard Unix cron syntax:
+#   field 1: minute (0)     → at the top of the hour
+#   field 2: hour   (8)     → 8am UTC (3am US Eastern, midnight US Pacific)
+#   field 3: day    (*)     → every day of the month
+#   field 4: month  (*)     → every month
+#   field 5: weekday(*)     → every day of the week
+# So: '0 8 * * *' = 8:00am UTC, every single day
 name: CI/CD Pipeline
 
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '0 8 * * *'
 
 # Use Node.js 24 for all actions (avoids deprecation warning for Node.js 20)
 env:
@@ -125,3 +145,43 @@ jobs:
       - name: Clean up SSH key
         if: always()
         run: rm -f deploy_key
+
+  # ──────────────────────────────────────────────
+  # Job 3: INGEST — Run the pipeline on a daily schedule
+  # ──────────────────────────────────────────────
+  ingest:
+    # Pattern: Conditional Job Trigger
+    # This job ONLY runs on the schedule trigger — not on every push.
+    # Without this condition, it would also run on every push to main,
+    # which would waste FRED API calls and obscure the deployment logs.
+    #
+    # github.event_name is a built-in variable GitHub sets automatically:
+    #   'push'     → someone pushed code
+    #   'schedule' → the cron timer fired
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+
+    steps:
+      # Pattern: Call a secured HTTP endpoint from CI
+      # The API key is stored as a GitHub Secret — never in the YAML.
+      # curl flags used here:
+      #   -s           → silent mode (no progress bar cluttering the log)
+      #   -w "\n"      → print a newline after the response body (clean formatting)
+      #   -X POST      → use HTTP POST method
+      #   -H           → add a header to the request
+      #   --fail-with-body → if HTTP status is 4xx or 5xx, exit with error code
+      #                      This makes the CI step fail visibly instead of
+      #                      succeeding silently on a bad response.
+      - name: Trigger daily ingestion
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          echo "Triggering SENTINEL ingestion pipeline..."
+          curl -s -w "\n" \
+            --fail-with-body \
+            -X POST "http://$EC2_HOST:8000/ingest" \
+            -H "X-API-Key: $API_KEY"
+          echo "Ingestion complete."
+          # The response printed above shows rows ingested + any alerts.
+          # Click into this step in GitHub Actions to see the daily run history.
