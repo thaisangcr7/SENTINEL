@@ -28,10 +28,25 @@ Every time `POST /ingest` is called (manually or on a daily schedule), SENTINEL:
 The API is served over plain HTTP on the instance IP. To move it to
 `https://api.sangthai.dev`, in this order:
 
-1. **DNS** — in Cloudflare, add an `A` record `api` pointing at the instance's
-   public IP, with the proxy **off** (grey cloud, "DNS only"). Let's Encrypt
-   must reach the box directly to validate the domain; a proxied record
-   answers on Cloudflare's addresses and validation fails.
+0. **A static address first.** The instance currently has a *dynamic* public
+   IP — no Elastic IP is allocated. Stop and start the instance and the address
+   changes, which would leave the DNS record pointing at nothing and break
+   certificate renewal. Allocate one and attach it before going further:
+
+   ```bash
+   ALLOC=$(aws ec2 allocate-address --domain vpc --query AllocationId --output text)
+   aws ec2 associate-address --instance-id <instance-id> --allocation-id "$ALLOC"
+   ```
+
+   Note this *replaces* the current public address, so the existing
+   `http://<old-ip>:8000` link stops working at that moment. An Elastic IP is
+   free while attached to a running instance and billed only when left
+   unattached.
+
+1. **DNS** — in Cloudflare, add an `A` record `api` pointing at the Elastic IP,
+   with the proxy **off** (grey cloud, "DNS only"). Let's Encrypt must reach
+   the box directly to validate the domain; a proxied record answers on
+   Cloudflare's addresses and validation fails.
 2. **Ports** — `terraform apply` from `terraform/`. Ports 80 and 443 are
    declared in `main.tf`; 80 is needed only for the ACME challenge and the
    redirect to HTTPS.
