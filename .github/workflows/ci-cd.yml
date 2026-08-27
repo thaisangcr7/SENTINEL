@@ -40,11 +40,13 @@
 # So: '0 8 * * *' = 8:00am UTC, every single day
 name: CI/CD Pipeline
 
+# The daily schedule is switched off: it called the deployed API, and the EC2
+# instance has been torn down. Re-add it if this is ever redeployed.
+#   schedule:
+#     - cron: '0 8 * * *'
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '0 8 * * *'
   # Pattern: Manual Trigger (workflow_dispatch)
   # Adding this enables the "Run workflow" button in the GitHub Actions UI.
   # Without it, the workflow can only be triggered by push or schedule.
@@ -106,8 +108,12 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
-    # Only deploy from the main branch (extra safety check)
-    if: github.ref == 'refs/heads/main'
+    # Only deploy from main, and only when a deploy target is actually
+    # configured. There is no EC2 instance right now, so without this guard
+    # every push would fail here trying to SSH to a host that no longer
+    # exists. Set the repository variable DEPLOY_TARGET to 'ec2' after
+    # running terraform apply to switch deployment back on.
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_TARGET == 'ec2'
 
     steps:
       # Pattern: SSH from CI/CD (write key → scan host fingerprint → SSH in → clean up)
@@ -168,7 +174,7 @@ jobs:
     #   'push'             → someone pushed code
     #   'schedule'         → the cron timer fired
     #   'workflow_dispatch'→ someone clicked "Run workflow" in the UI
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && vars.DEPLOY_TARGET == 'ec2'
     runs-on: ubuntu-latest
 
     steps:

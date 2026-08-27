@@ -1,8 +1,12 @@
 # SENTINEL
 
-A production-grade financial data pipeline that ingests live economic indicators from the [FRED API](https://fred.stlouisfed.org/), stores them in PostgreSQL, runs automated threshold checks, and exposes anomaly alerts via a REST API — deployed on AWS EC2 with Docker and a full CI/CD pipeline.
+A financial data pipeline that ingests economic indicators from the [FRED API](https://fred.stlouisfed.org/), stores them in PostgreSQL, runs automated threshold checks, and exposes anomaly alerts via a REST API — with the AWS environment defined in Terraform and a full CI/CD pipeline.
 
-**Live API:** http://52.23.231.90:8000/docs
+> **Not currently hosted.** It ran on AWS EC2 for five months; I took the
+> instance down rather than pay to keep a demo nobody was querying online. The
+> infrastructure is the artefact worth keeping — `terraform apply` from
+> `terraform/` recreates the instance, firewall and key pair from scratch. To
+> run it locally instead, `docker-compose up` needs nothing from AWS.
 
 ---
 
@@ -23,15 +27,16 @@ Every time `POST /ingest` is called (manually or on a daily schedule), SENTINEL:
 
 ---
 
-## HTTPS
+## If you redeploy it, put it behind HTTPS
 
-The API is served over plain HTTP on the instance IP. To move it to
-`https://api.sangthai.dev`, in this order:
+The original deployment served plain HTTP on the instance's IP, which browsers
+mark as Not secure. If this goes back up, do it properly, in this order:
 
-0. **A static address first.** The instance currently has a *dynamic* public
-   IP — no Elastic IP is allocated. Stop and start the instance and the address
-   changes, which would leave the DNS record pointing at nothing and break
-   certificate renewal. Allocate one and attach it before going further:
+0. **A static address first.** `main.tf` does not allocate an Elastic IP, so a
+   fresh instance gets a *dynamic* public address. Stop and start it and the
+   address changes, which leaves the DNS record pointing at nothing and breaks
+   certificate renewal a couple of months later. Allocate one and attach it
+   before going further — and note a public IPv4 is itself billable:
 
    ```bash
    ALLOC=$(aws ec2 allocate-address --domain vpc --query AllocationId --output text)
