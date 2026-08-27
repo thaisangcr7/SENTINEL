@@ -74,7 +74,10 @@ resource "aws_key_pair" "sentinel" {
 # By default, AWS blocks ALL traffic to a new instance.
 # We need to open specific ports so we can connect:
 #   - Port 22  → SSH (so we can log in and manage the server)
-#   - Port 8000 → Our FastAPI app (so clients can hit the API)
+#   - Port 80  → HTTP, used only so Let's Encrypt can prove we own the domain,
+#                and to redirect visitors to HTTPS
+#   - Port 443 → HTTPS, the address the API is actually served on
+#   - Port 8000 → Our FastAPI app, now behind Caddy rather than exposed directly
 #   - Outbound  → Allow all (so the server can download packages, call FRED API, etc.)
 resource "aws_security_group" "sentinel" {
   name        = "sentinel-sg"
@@ -89,9 +92,35 @@ resource "aws_security_group" "sentinel" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Inbound: allow our FastAPI app (port 8000)
+  # Inbound: HTTP. Caddy needs port 80 reachable for the Let's Encrypt HTTP-01
+  # challenge, which is how it proves we control api.sangthai.dev before a
+  # certificate is issued. Caddy redirects ordinary traffic on to HTTPS.
   ingress {
-    description = "FastAPI app"
+    description = "HTTP - ACME challenge and redirect to HTTPS"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Inbound: HTTPS. This is the address the API is served on once Caddy holds a
+  # certificate.
+  ingress {
+    description = "HTTPS - the public API"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Inbound: allow our FastAPI app (port 8000)
+  #
+  # Kept open for now so the existing http://<ip>:8000 address does not break
+  # while TLS is being set up. Once Caddy is serving api.sangthai.dev, close
+  # this: uvicorn binds localhost, Caddy reaches it from inside the box, and
+  # nothing outside needs to talk to 8000 directly.
+  ingress {
+    description = "FastAPI app - remove once Caddy fronts the API"
     from_port   = 8000
     to_port     = 8000
     protocol    = "tcp"

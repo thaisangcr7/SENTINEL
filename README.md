@@ -23,6 +23,32 @@ Every time `POST /ingest` is called (manually or on a daily schedule), SENTINEL:
 
 ---
 
+## HTTPS
+
+The API is served over plain HTTP on the instance IP. To move it to
+`https://api.sangthai.dev`, in this order:
+
+1. **DNS** — in Cloudflare, add an `A` record `api` pointing at the instance's
+   public IP, with the proxy **off** (grey cloud, "DNS only"). Let's Encrypt
+   must reach the box directly to validate the domain; a proxied record
+   answers on Cloudflare's addresses and validation fails.
+2. **Ports** — `terraform apply` from `terraform/`. Ports 80 and 443 are
+   declared in `main.tf`; 80 is needed only for the ACME challenge and the
+   redirect to HTTPS.
+3. **Caddy** — run the provisioning script against the box:
+
+   ```bash
+   ssh ubuntu@<instance-ip> 'sudo bash -s' < scripts/enable-https.sh
+   ```
+
+   It checks the DNS record resolves here before touching anything, installs
+   Caddy, points it at the app on `localhost:8000`, and waits for the
+   certificate. Safe to run twice.
+
+Once that is serving, close port 8000 in `main.tf` and apply again — uvicorn
+binds localhost and Caddy reaches it from inside the instance, so nothing
+outside needs port 8000 any more.
+
 ## API Endpoints
 
 | Method | Endpoint | Auth | Description |
